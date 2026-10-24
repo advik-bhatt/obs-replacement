@@ -1,0 +1,67 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  core-linux:
+    name: UpstageCore tests (Linux)
+    runs-on: ubuntu-latest
+    container: swift:6.1-noble
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Test core
+        run: swift test --parallel
+
+  macos:
+    name: Upstage.app (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Core tests on macOS
+        run: swift test --parallel
+      - name: Build app bundle (universal) + DMG
+        run: sh scripts/bundle.sh
+      - name: Smoke-check bundle
+        run: |
+          ls -la dist
+          plutil -lint dist/Upstage.app/Contents/Info.plist
+          codesign --verify --verbose=2 dist/Upstage.app
+          file dist/Upstage.app/Contents/MacOS/Upstage
+          otool -L dist/Upstage.app/Contents/MacOS/Upstage | head -40
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Upstage-macOS
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+      - name: Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.dmg
+            dist/*.zip
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref, '-') }}

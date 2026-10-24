@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Upstage</string>
+	<key>CFBundleExecutable</key>
+	<string>Upstage</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.advikbhatt.upstage</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Upstage</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.video</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSSupportsAutomaticGraphicsSwitching</key>
+	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Upstage shows and records your cameras, including an iPhone used as a Continuity Camera.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Upstage mixes and records audio from your microphones and audio devices such as BlackHole.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Upstage never sends Apple Events; this text exists so the system has something to show if a plugin asks.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Upstage accepts obs-websocket remote control connections from devices on your network when you enable it.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_obsws._tcp</string>
+	</array>
+</dict>
+</plist>
