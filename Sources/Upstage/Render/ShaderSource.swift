@@ -72,7 +72,7 @@ enum ShaderSource {
     float3 hsv2rgb(float3 c) {
         float4 K = float4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
         float3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
-        return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+        return c.z * mix(K.xxx, clamp(p - K.xxx, float3(0.0), float3(1.0)), c.y);
     }
 
     // p0 = brightness, contrast, saturation, gamma ; p1.x = hue shift (turns), p1.y = opacity
@@ -80,16 +80,16 @@ enum ShaderSource {
         float4 c = tex.sample(s, in.uv);
         float a = max(c.a, 1e-5);
         float3 rgb = c.rgb / a;
-        rgb = pow(max(rgb, 0.0), float3(1.0 / max(f.p0.w, 0.01)));
+        rgb = pow(max(rgb, float3(0.0)), float3(1.0 / max(f.p0.w, 0.01)));
         rgb = (rgb - 0.5) * f.p0.y + 0.5 + f.p0.x;
         float l = dot(rgb, float3(0.2126, 0.7152, 0.0722));
         rgb = mix(float3(l), rgb, f.p0.z);
         if (abs(f.p1.x) > 1e-5) {
-            float3 hsv = rgb2hsv(clamp(rgb, 0.0, 1.0));
+            float3 hsv = rgb2hsv(clamp(rgb, float3(0.0), float3(1.0)));
             hsv.x = fract(hsv.x + f.p1.x);
             rgb = hsv2rgb(hsv);
         }
-        rgb = clamp(rgb, 0.0, 1.0);
+        rgb = clamp(rgb, float3(0.0), float3(1.0));
         float oa = c.a * f.p1.y;
         return float4(rgb * oa, oa);
     }
@@ -103,10 +103,10 @@ enum ShaderSource {
         // compare in CbCr so lighting changes do not break the key
         float2 cc = float2(-0.1687 * rgb.r - 0.3313 * rgb.g + 0.5 * rgb.b, 0.5 * rgb.r - 0.4187 * rgb.g - 0.0813 * rgb.b);
         float2 kc = float2(-0.1687 * key.r - 0.3313 * key.g + 0.5 * key.b, 0.5 * key.r - 0.4187 * key.g - 0.0813 * key.b);
-        float d = distance(cc, kc) * 2.0;
+        float dist = distance(cc, kc) * 2.0;
         float similarity = f.p1.x;
         float smoothness = max(f.p1.y, 1e-4);
-        float alpha = smoothstep(similarity, similarity + smoothness, d);
+        float alpha = smoothstep(similarity, similarity + smoothness, dist);
         // spill suppression: pull the key hue out of edge pixels
         float spill = f.p1.z;
         float keyDom = max(key.g - max(key.r, key.b), 0.0) > 0.0 ? 1.0 : 0.0;
@@ -145,7 +145,7 @@ enum ShaderSource {
         float4 w = tex.sample(s, in.uv + float2(-t.x, 0.0));
         float4 blur = (n + so + e + w + c) / 5.0;
         float4 r = c + (c - blur) * f.p0.x * 4.0;
-        return float4(clamp(r.rgb, 0.0, 1.0), c.a);
+        return float4(clamp(r.rgb, float3(0.0), float3(1.0)), c.a);
     }
 
     // p0.x = radius (px), p0.y = direction (0 = horizontal, 1 = vertical)
@@ -153,12 +153,12 @@ enum ShaderSource {
         float2 dir = f.p0.y > 0.5 ? float2(0.0, f.texelSize.y) : float2(f.texelSize.x, 0.0);
         float radius = max(f.p0.x, 0.001);
         const int taps = 8;
-        float step = radius / float(taps);
+        float stepSize = radius / float(taps);
         float sigma = radius / 2.0;
         float4 acc = float4(0.0);
         float wsum = 0.0;
         for (int i = -taps; i <= taps; i++) {
-            float d = float(i) * step;
+            float d = float(i) * stepSize;
             float w = exp(-(d * d) / (2.0 * sigma * sigma));
             acc += tex.sample(s, in.uv + dir * d) * w;
             wsum += w;
@@ -179,13 +179,13 @@ enum ShaderSource {
         float2 inSize = 1.0 / f.texelSize;
         float2 pos = in.uv * inSize - 0.5;
         float2 base = floor(pos);
-        float2 frac = pos - base;
+        float2 fracPart = pos - base;
         float4 acc = float4(0.0);
         float wsum = 0.0;
         for (int j = -2; j <= 3; j++) {
-            float wy = lanczos(float(j) - frac.y);
+            float wy = lanczos(float(j) - fracPart.y);
             for (int i = -2; i <= 3; i++) {
-                float wx = lanczos(float(i) - frac.x);
+                float wx = lanczos(float(i) - fracPart.x);
                 float w = wx * wy;
                 float2 uv = (base + float2(float(i), float(j)) + 0.5) * f.texelSize;
                 acc += tex.sample(s, uv) * w;
@@ -193,7 +193,7 @@ enum ShaderSource {
             }
         }
         float4 r = acc / max(wsum, 1e-5);
-        return float4(clamp(r.rgb, 0.0, 1.0), clamp(r.a, 0.0, 1.0));
+        return float4(clamp(r.rgb, float3(0.0), float3(1.0)), clamp(r.a, 0.0, 1.0));
     }
 
     // ---- transitions -------------------------------------------------------
@@ -216,7 +216,7 @@ enum ShaderSource {
             float2 uvB = in.uv - d * t + d;
             bool inA = uvA.x >= 0.0 && uvA.x <= 1.0 && uvA.y >= 0.0 && uvA.y <= 1.0;
             if (inA) return a.sample(s, uvA);
-            return b.sample(s, clamp(uvB, 0.0, 1.0));
+            return b.sample(s, clamp(uvB, float2(0.0), float2(1.0)));
         }
     }
     """
