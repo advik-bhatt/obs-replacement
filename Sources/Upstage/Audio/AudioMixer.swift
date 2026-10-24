@@ -27,6 +27,9 @@ final class MixerChannel {
     var audioSettings: SourceAudioSettings
     var meter: PeakMeter
     var inputMeter: PeakMeter
+    /// Sync offset bookkeeping: the delay is inserted once per offset change, not re-gated every block.
+    var appliedOffsetFrames = 0
+    var delayRemaining = 0
     /// Scratch block, one raw plane per mix channel (stable pointers for the ring buffer read).
     private(set) var planes: [UnsafeMutablePointer<Float>]
     private(set) var capacity: Int
@@ -109,15 +112,18 @@ final class AudioMixer {
         t.setEventHandler { [weak self] in self?.tick() }
         t.resume()
         timer = t
-        startMonitor()
+        queue.async { [weak self] in self?.startMonitor() }
     }
 
     func stop() {
         isRunning = false
         timer?.cancel()
         timer = nil
-        monitor?.stop()
-        monitor = nil
+        // `monitor` is only touched on the mixer queue.
+        queue.sync { [self] in
+            monitor?.stop()
+            monitor = nil
+        }
     }
 
     // MARK: channels & sinks
@@ -214,25 +220,36 @@ final class AudioMixer {
         for ch in chans {
             ch.ensureBlock(frames: n, channels: channels)
             // Bound latency: if the ring has grown far past the target, drop the backlog.
-            let offsetFrames = Int(Double(ch.output.syncOffsetMs) / 1000 * sampleRate)
-            let target = targetLatencyFrames + max(0, offsetFrames)
+            let offsetFrames = max(0, Int(Double(ch.output.syncOffsetMs) / 1000 * sampleRate))
+            let target = targetLatencyFrames + offsetFrames
             // Media sources legitimately read ahead; only trim a real backlog.
             let trimLine = max(target * 4, Int(sampleRate / 2)) + n
             if ch.output.ring.availableFrames > trimLine { ch.output.ring.trim(keepFrames: target) }
-            // Respect a positive sync offset by waiting until enough has accumulated.
-            if offsetFrames > 0, ch.output.ring.availableFrames < offsetFrames {
+            // A positive sync offset is a one-time delay: emit that much silence once, then
+            // consume normally (the backlog that builds meanwhile is the delay).
+            if offsetFrames != ch.appliedOffsetFrames {
+                ch.delayRemaining = max(0, offsetFrames - ch.appliedOffsetFrames)
+                if offsetFrames < ch.appliedOffsetFrames {
+                    ch.output.ring.trim(keepFrames: max(0, ch.output.ring.availableFrames - (ch.appliedOffsetFrames - offsetFrames)))
+                }
+                ch.appliedOffsetFrames = offsetFrames
+            }
+            if ch.delayRemaining >= n {
+                ch.delayRemaining -= n
                 for c in 0..<channels { ch.planes[c].update(repeating: 0, count: n) }
             } else {
+                ch.delayRemaining = 0
                 ch.output.ring.read(into: ch.planes, frames: n)
             }
             var inPeaks = [Float](repeating: 0, count: channels)
             for c in 0..<channels {
                 inPeaks[c] = AudioMath.peak(UnsafeBufferPointer(start: ch.planes[c], count: n))
             }
-            ch.inputMeter.update(peaks: inPeaks, elapsed: elapsed)
             let isActive = active?.contains(ch.sourceID) ?? true
             let gain: Float = isActive ? ch.audioSettings.linearGain : 0
             let mode = ch.audioSettings.monitoring
+            // Track 1 is the master mix; a source only reaches it with bit 0 set.
+            let toMaster = mode != .monitorOnly && (ch.audioSettings.tracks & 1) != 0
             var peaks = [Float](repeating: 0, count: channels)
             for c in 0..<channels {
                 let g = gain
@@ -240,7 +257,7 @@ final class AudioMixer {
                     let plane = ch.planes[c]
                     for f in 0..<n {
                         let v = plane[f] * g
-                        if mode != .monitorOnly {
+                        if toMaster {
                             master[c][f] += v
                         }
                         if mode != .off {
@@ -252,7 +269,11 @@ final class AudioMixer {
                 }
             }
             if mode != .off { anyMonitor = true }
+            // Meters are read by the UI under `lock`.
+            lock.lock()
+            ch.inputMeter.update(peaks: inPeaks, elapsed: elapsed)
             ch.meter.update(peaks: peaks, elapsed: elapsed)
+            lock.unlock()
             // Tracks: a source can feed any subset of 6 mix tracks (bit mask).
             if mode != .monitorOnly, gain > 0 {
                 for bit in 0..<6 where ch.audioSettings.tracks & (1 << bit) != 0 {
@@ -293,6 +314,8 @@ final class MonitorOutput {
     private let channels: Int
     private let sampleRate: Double
     private(set) var isRunning = false
+    private var deviceUID: String?
+    private var configObserver: NSObjectProtocol?
 
     init(sampleRate: Double, channels: Int) {
         self.sampleRate = sampleRate
@@ -301,6 +324,7 @@ final class MonitorOutput {
     }
 
     func start(deviceUID: String?) {
+        self.deviceUID = deviceUID
         guard let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: AVAudioChannelCount(channels), interleaved: false) else { return }
         if let uid = deviceUID, let dev = CoreAudioDevices.device(uid: uid), let au = engine.outputNode.audioUnit {
             var id = dev
@@ -324,9 +348,27 @@ final class MonitorOutput {
         } catch {
             NSLog("Monitor output failed to start: \(error)")
         }
+        // Headphones plugged in, default output switched, device unplugged: the
+        // engine stops itself and posts this; rebuild on it.
+        if configObserver == nil {
+            configObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
+                guard let self, self.isRunning else { return }
+                self.restart()
+            }
+        }
+    }
+
+    private func restart() {
+        engine.stop()
+        if let n = sourceNode { engine.detach(n) }
+        sourceNode = nil
+        isRunning = false
+        start(deviceUID: deviceUID)
     }
 
     func stop() {
+        if let o = configObserver { NotificationCenter.default.removeObserver(o) }
+        configObserver = nil
         engine.stop()
         if let n = sourceNode { engine.detach(n) }
         sourceNode = nil

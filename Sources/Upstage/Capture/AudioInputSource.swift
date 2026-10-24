@@ -17,7 +17,9 @@ final class AudioInputSource: AudioSourceInstance {
     private var deviceID: AudioDeviceID = 0
     private var bufferList: UnsafeMutableAudioBufferListPointer?
     private var bufferFrames = 0
+    private var planeBytes = 0
     private var channels = 0
+    private var defaultListener: AudioObjectPropertyListenerBlock?
     private var sampleRate: Double = 0
     private let queue = DispatchQueue(label: "upstage.audioinput", qos: .userInitiated)
     private(set) var isActive = false
@@ -139,15 +141,18 @@ final class AudioInputSource: AudioSourceInstance {
             return
         }
 
-        bufferFrames = max(CoreAudioDevices.bufferFrameSize(dev), 512)
+        // Allocate generously once so the render callback never reallocates when
+        // the device's IO buffer size changes under us.
+        bufferFrames = max(CoreAudioDevices.bufferFrameSize(dev), 4096)
         var maxFrames = UInt32(bufferFrames)
         AudioUnitSetProperty(au, kAudioUnitProperty_MaximumFramesPerSlice, kAudioUnitScope_Global, 0, &maxFrames, UInt32(MemoryLayout<UInt32>.size))
 
+        planeBytes = bufferFrames * MemoryLayout<Float>.size
         let abl = AudioBufferList.allocate(maximumBuffers: channels)
         for ch in 0..<channels {
             abl[ch].mNumberChannels = 1
-            abl[ch].mDataByteSize = UInt32(bufferFrames * 4 * 4)
-            abl[ch].mData = UnsafeMutableRawPointer.allocate(byteCount: bufferFrames * 4 * 4, alignment: 16)
+            abl[ch].mDataByteSize = UInt32(planeBytes)
+            abl[ch].mData = UnsafeMutableRawPointer.allocate(byteCount: planeBytes, alignment: 16)
         }
         bufferList = abl
 
@@ -215,13 +220,25 @@ final class AudioInputSource: AudioSourceInstance {
         }
         deviceListener = block
         AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, queue, block)
+        // "Default input" sources must also follow the system default when it changes.
+        if settings.deviceUID == nil {
+            var defAddr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            defaultListener = block
+            AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &defAddr, queue, block)
+        }
     }
 
     private func removeDeviceListListener() {
-        guard let block = deviceListener else { return }
-        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-        AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, queue, block)
-        deviceListener = nil
+        if let block = deviceListener {
+            var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, queue, block)
+            deviceListener = nil
+        }
+        if let block = defaultListener {
+            var defAddr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &defAddr, queue, block)
+            defaultListener = nil
+        }
     }
 
     // MARK: render callback (audio thread)
@@ -230,13 +247,13 @@ final class AudioInputSource: AudioSourceInstance {
         guard let au = unit, let abl = bufferList else { return noErr }
         let frames = Int(inNumberFrames)
         guard frames > 0 else { return noErr }
-        let needed = frames * 4
-        if Int(abl[0].mDataByteSize) < needed {
-            // Device asked for more than we allocated; grow once (allocation on the audio thread is rare and bounded).
+        let needed = frames * MemoryLayout<Float>.size
+        if needed > planeBytes {
+            // Device asked for more than we allocated; grow once (rare, bounded).
+            planeBytes = needed * 2
             for ch in 0..<channels {
                 abl[ch].mData?.deallocate()
-                abl[ch].mData = UnsafeMutableRawPointer.allocate(byteCount: needed * 2, alignment: 16)
-                abl[ch].mDataByteSize = UInt32(needed * 2)
+                abl[ch].mData = UnsafeMutableRawPointer.allocate(byteCount: planeBytes, alignment: 16)
             }
         }
         for ch in 0..<channels { abl[ch].mDataByteSize = UInt32(needed) }
