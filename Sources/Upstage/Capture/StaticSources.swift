@@ -43,7 +43,7 @@ final class ImageSource: VideoSourceInstance {
     private let device: MTLDevice
     private let slot = FrameSlot()
     private(set) var isActive = false
-    private(set) var status = "Not started"
+    @Synchronized private(set) var status = "Not started"
     private var size: Size2D?
 
     init(descriptor: SourceDescriptor, settings: ImageSettings, device: MTLDevice) {
@@ -110,7 +110,7 @@ final class TextSource: VideoSourceInstance {
     private let device: MTLDevice
     private let slot = FrameSlot()
     private(set) var isActive = false
-    private(set) var status = "Not started"
+    @Synchronized private(set) var status = "Not started"
     private var size: Size2D?
 
     init(descriptor: SourceDescriptor, settings: TextSettings, device: MTLDevice) {

@@ -658,11 +658,27 @@ final class AppState: ObservableObject {
         profileNames = store.listProfiles()
     }
 
-    func shutdown() {
+    /// Stops outputs, waits for the recorder to finalise its file, then stops the
+    /// engine. `completion` runs on the main queue (at most ~3 s later).
+    func shutdown(completion: @escaping () -> Void) {
         store.flush()
-        if isRecording { stopRecording() }
+        let group = DispatchGroup()
+        if isRecording, let engine {
+            group.enter()
+            isRecording = false
+            engine.stopRecording { _ in group.leave() }
+        }
         if isStreaming { stopStreaming() }
-        engine?.stop()
+        let deadline = DispatchTime.now() + 3
+        DispatchQueue.global().async { [weak self] in
+            _ = group.wait(timeout: deadline)
+            // Give the RTMP goodbye a moment to leave the socket.
+            if self?.engine?.stream != nil { Thread.sleep(forTimeInterval: 0.3) }
+            DispatchQueue.main.async {
+                self?.engine?.stop()
+                completion()
+            }
+        }
     }
 }
 

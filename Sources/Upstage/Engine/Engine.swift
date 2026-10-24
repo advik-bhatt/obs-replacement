@@ -419,10 +419,11 @@ final class Engine {
         // Notify size changes (auto-fit in the UI)
         for (id, inst) in insts {
             guard let v = inst as? VideoSourceInstance, let size = v.displayedSize ?? v.latestFrame()?.size, !size.isEmpty else { continue }
-            if knownSizes[id] != size {
-                knownSizes[id] = size
-                DispatchQueue.main.async { self.onSourceSizeChanged?(id, size) }
-            }
+            lock.lock()
+            let changed = knownSizes[id] != size
+            if changed { knownSizes[id] = size }
+            lock.unlock()
+            if changed { DispatchQueue.main.async { self.onSourceSizeChanged?(id, size) } }
         }
 
         guard !programTextures.isEmpty, let cb = renderer.commandQueue.makeCommandBuffer() else {

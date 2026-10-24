@@ -61,7 +61,7 @@ final class ScreenCaptureSource: NSObject, VideoSourceInstance, SCStreamOutput, 
     private let queue = DispatchQueue(label: "upstage.screen", qos: .userInteractive)
     private let slot = FrameSlot()
     private(set) var isActive = false
-    private(set) var status = "Not started"
+    @Synchronized private(set) var status = "Not started"
     private var size: Size2D?
 
     init(descriptor: SourceDescriptor, mode: Mode, textureCache: TextureCache) {
@@ -207,7 +207,7 @@ final class SystemAudioSource: NSObject, AudioSourceInstance, SCStreamOutput, SC
     private var stream: SCStream?
     private let queue = DispatchQueue(label: "upstage.sysaudio", qos: .userInitiated)
     private(set) var isActive = false
-    private(set) var status = "Not started"
+    @Synchronized private(set) var status = "Not started"
 
     init(descriptor: SourceDescriptor, settings: SystemAudioSettings) {
         id = descriptor.id

@@ -28,8 +28,8 @@ final class StreamOutput: AudioSink {
 
     let settings: StreamSettings
     let video: VideoSettings
-    private(set) var state: State = .idle
-    private(set) var stats = Stats()
+    @Synchronized private(set) var state: State = .idle
+    @Synchronized private(set) var stats = Stats()
     var onStateChange: ((State) -> Void)?
 
     private let queue = DispatchQueue(label: "upstage.stream", qos: .userInitiated)
@@ -53,7 +53,7 @@ final class StreamOutput: AudioSink {
     init(settings: StreamSettings, video: VideoSettings) {
         self.settings = settings
         self.video = video
-        audioTrackMask = UInt8(1 << max(0, settings.audioTrack - 1))
+        audioTrackMask = UInt8(1 << min(5, max(0, settings.audioTrack - 1)))
         maxOutstandingBytes = max(settings.videoBitrateKbps * 1000 / 8 * 3, 2_000_000) // ~3 s of video
     }
 

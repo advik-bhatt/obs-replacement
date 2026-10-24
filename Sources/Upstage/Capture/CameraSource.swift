@@ -26,7 +26,7 @@ final class CameraSource: NSObject, VideoSourceInstance, AudioSourceInstance,
     private var observers: [NSObjectProtocol] = []
     private var restartAttempts = 0
     private(set) var isActive = false
-    private(set) var status = "Not started"
+    @Synchronized private(set) var status = "Not started"
     private var rawSize: Size2D?
     let audioOutput = AudioSourceOutput()
 

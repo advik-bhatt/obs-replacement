@@ -21,7 +21,7 @@ final class AudioInputSource: AudioSourceInstance {
     private var sampleRate: Double = 0
     private let queue = DispatchQueue(label: "upstage.audioinput", qos: .userInitiated)
     private(set) var isActive = false
-    private(set) var status = "Not started"
+    @Synchronized private(set) var status = "Not started"
     private var restartTimer: DispatchSourceTimer?
     private var deviceListener: AudioObjectPropertyListenerBlock?
 

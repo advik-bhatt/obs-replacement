@@ -22,7 +22,7 @@ final class Recorder: AudioSink {
     private let queue = DispatchQueue(label: "upstage.recorder", qos: .userInitiated)
     private var sessionStarted = false
     private var firstPTS: Double?
-    private(set) var state: State = .idle
+    @Synchronized private(set) var state: State = .idle
     private var pauseStart: Double?
     private var pausedTotal: Double = 0
     private(set) var videoFramesWritten = 0
@@ -34,7 +34,7 @@ final class Recorder: AudioSink {
     init(settings: RecordingSettings, video: VideoSettings, sceneName: String) throws {
         self.settings = settings
         self.video = video
-        audioTrackMask = UInt8(1 << max(0, settings.audioTrack - 1))
+        audioTrackMask = UInt8(1 << min(5, max(0, settings.audioTrack - 1)))
         let dir = URL(fileURLWithPath: (settings.directory as NSString).expandingTildeInPath, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         url = dir.appendingPathComponent(settings.filename(date: Date(), sceneName: sceneName))

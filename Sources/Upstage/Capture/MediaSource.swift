@@ -23,7 +23,7 @@ final class MediaSource: VideoSourceInstance, AudioSourceInstance {
     private var assetDuration: Double = 0
     private var naturalSize: Size2D?
     private(set) var isActive = false
-    private(set) var status = "Not started"
+    @Synchronized private(set) var status = "Not started"
     private var playbackOffset: Double = 0
     private var finished = false
 

@@ -21,7 +21,7 @@ final class ReplayBuffer: AudioSink {
         self.settings = settings
         self.recording = recording
         self.video = video
-        audioTrackMask = UInt8(1 << max(0, recording.audioTrack - 1))
+        audioTrackMask = UInt8(1 << min(5, max(0, recording.audioTrack - 1)))
     }
 
     func start() {
@@ -124,17 +124,20 @@ final class ReplayBuffer: AudioSink {
         writer.startSession(atSourceTime: .zero)
 
         let group = DispatchGroup()
+        // requestMediaDataWhenReady re-invokes its block whenever the input is
+        // ready again, so the cursors must live outside the blocks.
+        var videoIndex = 0
+        var audioIndex = 0
         group.enter()
         vi.requestMediaDataWhenReady(on: queue) {
-            var index = 0
             while vi.isReadyForMoreMediaData {
-                if index >= frames.count {
+                if videoIndex >= frames.count {
                     vi.markAsFinished()
                     group.leave()
                     return
                 }
-                let f = frames[index]
-                index += 1
+                let f = frames[videoIndex]
+                videoIndex += 1
                 if let sb = ReplayBuffer.retimed(f.sampleBuffer, by: -base) {
                     vi.append(sb)
                 }
@@ -142,15 +145,14 @@ final class ReplayBuffer: AudioSink {
         }
         group.enter()
         ai.requestMediaDataWhenReady(on: queue) {
-            var index = 0
             while ai.isReadyForMoreMediaData {
-                if index >= blocks.count {
+                if audioIndex >= blocks.count {
                     ai.markAsFinished()
                     group.leave()
                     return
                 }
-                let b = blocks[index]
-                index += 1
+                let b = blocks[audioIndex]
+                audioIndex += 1
                 if let fd, let sb = Recorder.makeSampleBuffer(b, format: fd, pts: CMTime(seconds: max(0, b.timestamp - base), preferredTimescale: 90_000)) {
                     ai.append(sb)
                 }

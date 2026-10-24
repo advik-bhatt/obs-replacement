@@ -47,6 +47,21 @@ extension VideoSourceInstance {
     var quarterTurns: Int { 0 }
 }
 
+/// Lock-guarded value for properties written on capture/encoder queues and
+/// read on the main thread (Swift strings and structs are not safe to tear).
+@propertyWrapper
+final class Synchronized<Value> {
+    private var value: Value
+    private let lock = NSLock()
+
+    init(wrappedValue: Value) { value = wrappedValue }
+
+    var wrappedValue: Value {
+        get { lock.lock(); defer { lock.unlock() }; return value }
+        set { lock.lock(); value = newValue; lock.unlock() }
+    }
+}
+
 /// Thread-safe slot for the newest frame of a source.
 final class FrameSlot {
     private let lock = NSLock()

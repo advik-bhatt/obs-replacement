@@ -98,7 +98,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.addButton(withTitle: "Cancel")
             if alert.runModal() != .alertFirstButtonReturn { return .terminateCancel }
         }
-        state?.shutdown()
-        return .terminateNow
+        guard let state else { return .terminateNow }
+        // Recording finalisation and the stream's goodbye are asynchronous; let
+        // them finish, then resume termination.
+        state.shutdown { NSApp.reply(toApplicationShouldTerminate: true) }
+        return .terminateLater
     }
 }

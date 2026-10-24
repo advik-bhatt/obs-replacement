@@ -8,6 +8,7 @@ final class MIDIManager {
     private var client = MIDIClientRef()
     private var port = MIDIPortRef()
     private var connected: [MIDIEndpointRef: String] = [:]
+    private let lock = NSLock()
     private(set) var bindings: [MIDIBinding] = []
     private(set) var sourceNames: [String] = []
     /// (device, channel, message, value, isRelease)
@@ -42,20 +43,26 @@ final class MIDIManager {
         var names: [String] = []
         let n = MIDIGetNumberOfSources()
         var seen = Set<MIDIEndpointRef>()
+        lock.lock()
+        var current = connected
+        lock.unlock()
         for i in 0..<n {
             let src = MIDIGetSource(i)
             seen.insert(src)
             let name = MIDIManager.name(of: src)
             names.append(name)
-            if connected[src] == nil {
+            if current[src] == nil {
                 let refCon = UnsafeMutableRawPointer(bitPattern: Int(src))
-                if MIDIPortConnectSource(port, src, refCon) == noErr { connected[src] = name }
+                if MIDIPortConnectSource(port, src, refCon) == noErr { current[src] = name }
             }
         }
-        for (src, _) in connected where !seen.contains(src) {
+        for (src, _) in current where !seen.contains(src) {
             MIDIPortDisconnectSource(port, src)
-            connected.removeValue(forKey: src)
+            current.removeValue(forKey: src)
         }
+        lock.lock()
+        connected = current
+        lock.unlock()
         sourceNames = names
     }
 
@@ -69,15 +76,20 @@ final class MIDIManager {
 
     private func handle(_ packetList: UnsafePointer<MIDIPacketList>, srcRef: UnsafeMutableRawPointer?) {
         let endpoint = MIDIEndpointRef(UInt(bitPattern: srcRef))
+        lock.lock()
         let device = connected[endpoint] ?? "MIDI"
+        lock.unlock()
         var bytes: [UInt8] = []
-        var packet = packetList.pointee.packet
+        // Walk the packets in place: MIDIPacket is variable length, so copying
+        // one onto the stack and calling MIDIPacketNext on the copy reads garbage.
+        guard let dataOffset = MemoryLayout<MIDIPacket>.offset(of: \.data),
+              let firstOffset = MemoryLayout<MIDIPacketList>.offset(of: \.packet) else { return }
+        var p = UnsafeRawPointer(packetList).advanced(by: firstOffset).assumingMemoryBound(to: MIDIPacket.self)
         for _ in 0..<packetList.pointee.numPackets {
-            let length = Int(packet.length)
-            withUnsafeBytes(of: &packet.data) { raw in
-                bytes.append(contentsOf: raw.prefix(length))
-            }
-            packet = MIDIPacketNext(&packet).pointee
+            let length = Int(p.pointee.length)
+            let data = UnsafeRawPointer(p).advanced(by: dataOffset)
+            bytes.append(contentsOf: UnsafeRawBufferPointer(start: data, count: length))
+            p = UnsafePointer(MIDIPacketNext(p))
         }
         let events = MIDIParser.parse(bytes)
         guard !events.isEmpty else { return }
