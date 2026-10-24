@@ -10,10 +10,12 @@ VideoToolbox, Network.framework, CoreMIDI. No Electron, no third-party
 dependencies, Apple Silicon and Intel (universal binary). Requires macOS 14
 Sonoma or newer.
 
-> Status: v0.1.0 builds on GitHub's macOS runner and the core is unit-tested,
-> but the app has not yet been run on real hardware (it was written from a
-> Linux session). Expect first-run bugs; file them as issues with the status
-> line shown in the Sources panel.
+> Status: alpha. v0.1.0 builds as a universal binary on GitHub's macOS
+> runner, the core is unit-tested (47 tests, Linux and macOS), and the app
+> code has been through an adversarial review pass, but it has not yet been
+> run on real hardware (it was written from a Linux session). Expect
+> first-run bugs; file them as issues with the status line shown in the
+> Sources panel.
 
 ## Download
 
