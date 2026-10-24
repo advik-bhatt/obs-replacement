@@ -36,8 +36,8 @@ jobs:
           sw_vers
           xcodebuild -version
           swift --version
-      - name: Core tests on macOS
-        run: swift test --parallel
+      - name: Core tests on macOS (also compiles the app; report every error at once)
+        run: swift test --parallel -Xswiftc -continue-building-after-errors
       - name: Build app bundle (universal) + DMG
         run: sh scripts/bundle.sh
       - name: Smoke-check bundle

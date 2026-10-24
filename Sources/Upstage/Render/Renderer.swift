@@ -79,18 +79,21 @@ final class Renderer {
         guard let queue = device.makeCommandQueue() else { throw RendererError.noDevice }
         commandQueue = queue
         let options = MTLCompileOptions()
-        options.fastMathEnabled = true
+        let lib: MTLLibrary
         do {
-            library = try device.makeLibrary(source: ShaderSource.metal, options: options)
+            lib = try device.makeLibrary(source: ShaderSource.metal, options: options)
         } catch {
             throw RendererError.shaderCompile("\(error)")
         }
+        library = lib
 
+        // Local helper on purpose: it must not touch `self` before every stored
+        // property has a value.
         func pipeline(_ fragment: String, blend: Bool) throws -> MTLRenderPipelineState {
             let d = MTLRenderPipelineDescriptor()
             d.label = fragment
-            d.vertexFunction = library.makeFunction(name: "quad_vertex")
-            d.fragmentFunction = library.makeFunction(name: fragment)
+            d.vertexFunction = lib.makeFunction(name: "quad_vertex")
+            d.fragmentFunction = lib.makeFunction(name: fragment)
             let att = d.colorAttachments[0]!
             att.pixelFormat = Renderer.pixelFormat
             if blend {

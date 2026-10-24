@@ -141,15 +141,7 @@ final class CameraSource: NSObject, VideoSourceInstance, AudioSourceInstance,
             return
         }
         device = d
-        do {
-            try d.lockForConfiguration()
-            selectFormat(d)
-            d.unlockForConfiguration()
-        } catch {
-            status = "Could not configure \(d.localizedName): \(error.localizedDescription)"
-        }
         session.beginConfiguration()
-        session.sessionPreset = .inputPriority
         do {
             let input = try AVCaptureDeviceInput(device: d)
             guard session.canAddInput(input) else { throw NSError(domain: "Upstage", code: 1, userInfo: [NSLocalizedDescriptionKey: "cannot add input"]) }
@@ -159,6 +151,15 @@ final class CameraSource: NSObject, VideoSourceInstance, AudioSourceInstance,
             session.commitConfiguration()
             status = "Cannot open \(d.localizedName): \(error.localizedDescription)"
             return
+        }
+        // Pick the format after the input is attached so the session does not
+        // reset it to match a preset.
+        do {
+            try d.lockForConfiguration()
+            selectFormat(d)
+            d.unlockForConfiguration()
+        } catch {
+            status = "Could not configure \(d.localizedName): \(error.localizedDescription)"
         }
         let vo = AVCaptureVideoDataOutput()
         vo.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]

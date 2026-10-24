@@ -30,9 +30,9 @@ struct MainView: View {
             }
         }
         .sheet(isPresented: $state.showAddSource) { AddSourceSheet().environmentObject(state) }
-        .sheet(item: sheet($state.propertiesSourceID)) { s in SourcePropertiesView(sourceID: s.id).environmentObject(state) }
-        .sheet(item: sheet($state.filtersSourceID)) { s in FiltersView(sourceID: s.id).environmentObject(state) }
-        .sheet(item: sheet($state.transformItemID)) { s in TransformView(itemID: s.id).environmentObject(state) }
+        .sheet(item: sheetItem($state.propertiesSourceID)) { s in SourcePropertiesView(sourceID: s.id).environmentObject(state) }
+        .sheet(item: sheetItem($state.filtersSourceID)) { s in FiltersView(sourceID: s.id).environmentObject(state) }
+        .sheet(item: sheetItem($state.transformItemID)) { s in TransformView(itemID: s.id).environmentObject(state) }
         .alert(item: $state.alert) { a in Alert(title: Text(a.title), message: Text(a.message)) }
     }
 
@@ -60,7 +60,7 @@ struct SheetID: Identifiable {
 }
 
 /// Bridges an optional UUID to the Identifiable item `.sheet(item:)` wants.
-func sheet(_ binding: Binding<UUID?>) -> Binding<SheetID?> {
+func sheetItem(_ binding: Binding<UUID?>) -> Binding<SheetID?> {
     Binding(get: { binding.wrappedValue.map { SheetID(id: $0) } }, set: { binding.wrappedValue = $0?.id })
 }
 
