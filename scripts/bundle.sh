@@ -19,13 +19,15 @@ CONFIG=${CONFIG:-release}
 echo "==> building $APP_NAME $VERSION ($CONFIG, $ARCHS)"
 if [ "$ARCHS" = "universal" ]; then
   swift build -c "$CONFIG" --arch arm64 --arch x86_64 --product "$APP_NAME"
-  BIN=$(find .build/apple/Products -type f -name "$APP_NAME" -path "*$(echo "$CONFIG" | sed 's/./\U&/')*" | head -1)
-  [ -n "$BIN" ] || BIN=$(find .build/apple/Products -type f -name "$APP_NAME" | head -1)
+  BIN=$(swift build -c "$CONFIG" --arch arm64 --arch x86_64 --show-bin-path)/$APP_NAME
 else
   swift build -c "$CONFIG" --product "$APP_NAME"
   BIN=$(swift build -c "$CONFIG" --show-bin-path)/$APP_NAME
 fi
-[ -f "$BIN" ] || { echo "binary not found"; exit 1; }
+[ -f "$BIN" ] || { echo "binary not found at $BIN"; exit 1; }
+# Never ship the dSYM's DWARF companion (same file name, lives next to the product).
+case "$BIN" in *.dSYM*) echo "refusing to bundle a dSYM: $BIN"; exit 1 ;; esac
+file "$BIN" | grep -q "executable" || { echo "not an executable: $(file "$BIN")"; exit 1; }
 echo "    binary: $BIN"
 lipo -info "$BIN" 2>/dev/null || true
 
