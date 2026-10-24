@@ -216,7 +216,9 @@ final class AudioMixer {
             // Bound latency: if the ring has grown far past the target, drop the backlog.
             let offsetFrames = Int(Double(ch.output.syncOffsetMs) / 1000 * sampleRate)
             let target = targetLatencyFrames + max(0, offsetFrames)
-            if ch.output.ring.availableFrames > target * 4 + n { ch.output.ring.trim(keepFrames: target) }
+            // Media sources legitimately read ahead; only trim a real backlog.
+            let trimLine = max(target * 4, Int(sampleRate / 2)) + n
+            if ch.output.ring.availableFrames > trimLine { ch.output.ring.trim(keepFrames: target) }
             // Respect a positive sync offset by waiting until enough has accumulated.
             if offsetFrames > 0, ch.output.ring.availableFrames < offsetFrames {
                 for c in 0..<channels { ch.planes[c].update(repeating: 0, count: n) }

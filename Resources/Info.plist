@@ -32,6 +32,8 @@
 	<string>NSApplication</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
+	<key>NSCameraUseContinuityCameraDeviceType</key>
+	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Upstage shows and records your cameras, including an iPhone used as a Continuity Camera.</string>
 	<key>NSMicrophoneUsageDescription</key>

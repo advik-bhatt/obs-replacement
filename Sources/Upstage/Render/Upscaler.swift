@@ -37,6 +37,12 @@ final class UpscalerCache {
         failedKeys.removeAll()
     }
 
+    /// Drops every scaler whose key starts with `prefix` (a removed source).
+    func remove(prefix: String) {
+        for k in entries.keys where k.hasPrefix(prefix) { entries.removeValue(forKey: k) }
+        failedKeys = failedKeys.filter { !$0.hasPrefix(prefix) }
+    }
+
     /// Encodes a MetalFX upscale of `input` into a cached output texture. Returns nil if MetalFX
     /// is unavailable on this GPU or a scaler could not be created for these sizes.
     func metalFX(_ cb: MTLCommandBuffer, device: MTLDevice, renderer: Renderer, input: MTLTexture, to size: Size2D, key: String) -> MTLTexture? {
@@ -44,10 +50,10 @@ final class UpscalerCache {
         guard metalFXAvailable == true else { return nil }
         let inSize = Size2D(input.width, input.height)
         guard size.width >= inSize.width, size.height >= inSize.height else { return nil }
-        if failedKeys.contains(key + "\(inSize)\(size)") { return nil }
+        let entryKey = "\(key)|\(inSize)|\(size)"
+        if failedKeys.contains(entryKey) { return nil }
 
-        var entry = entries[key]
-        if let e = entry, e.input != inSize || e.output != size { entry = nil }
+        var entry = entries[entryKey]
         if entry == nil {
             let d = MTLFXSpatialScalerDescriptor()
             d.inputWidth = inSize.width
@@ -58,7 +64,7 @@ final class UpscalerCache {
             d.outputTextureFormat = Renderer.pixelFormat
             d.colorProcessingMode = .perceptual
             guard let scaler = d.makeSpatialScaler(device: device) else {
-                failedKeys.insert(key + "\(inSize)\(size)")
+                failedKeys.insert(entryKey)
                 NSLog("MetalFX: could not create spatial scaler \(inSize) -> \(size); using Lanczos")
                 return nil
             }
@@ -68,7 +74,7 @@ final class UpscalerCache {
             guard let out = device.makeTexture(descriptor: td) else { return nil }
             out.label = "metalfx.\(key)"
             let e = Entry(scaler: scaler, input: inSize, output: size, outputTexture: out)
-            entries[key] = e
+            entries[entryKey] = e
             entry = e
         }
         guard let e = entry else { return nil }

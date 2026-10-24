@@ -204,8 +204,9 @@ enum ShaderSource {
         if (kind == 0) {
             return mix(a.sample(s, in.uv), b.sample(s, in.uv), t);
         } else if (kind == 1) {
-            if (t < 0.5) return a.sample(s, in.uv) * (1.0 - t * 2.0);
-            return b.sample(s, in.uv) * ((t - 0.5) * 2.0);
+            float k = t < 0.5 ? (1.0 - t * 2.0) : ((t - 0.5) * 2.0);
+            float4 c = t < 0.5 ? a.sample(s, in.uv) : b.sample(s, in.uv);
+            return float4(c.rgb * k, 1.0);
         } else {
             float2 d = float2(0.0);
             if (kind == 2) d = float2(-1.0, 0.0);

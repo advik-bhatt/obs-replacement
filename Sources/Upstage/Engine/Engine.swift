@@ -156,12 +156,14 @@ final class Engine {
         lock.lock()
         collection = c
         let wanted = Dictionary(uniqueKeysWithValues: c.sources.map { ($0.id, $0) })
+        var removed: [UUID] = []
         for (id, inst) in sources where wanted[id] == nil {
             toStop.append(inst)
             sources.removeValue(forKey: id)
             descriptors.removeValue(forKey: id)
             mixer.removeSource(id)
             knownSizes.removeValue(forKey: id)
+            removed.append(id)
         }
         for d in c.sources {
             if let existing = sources[d.id] {
@@ -193,6 +195,9 @@ final class Engine {
         lock.unlock()
         toStop.forEach { $0.stop() }
         toStart.forEach { $0.start() }
+        if !removed.isEmpty {
+            renderQueue.async { [weak self] in removed.forEach { self?.renderer.forget(sourceID: $0) } }
+        }
         updateActiveAudio()
     }
 
@@ -513,12 +518,18 @@ final class Engine {
         cb.commit()
 
         if let done = finishedTransition {
+            // Only commit if this is still the active transition (a cut may have replaced it mid-frame).
             lock.lock()
-            if transition?.to == done { transition = nil }
-            programSceneID = done
+            let commit = transition?.to == done
+            if commit {
+                transition = nil
+                programSceneID = done
+            }
             lock.unlock()
-            updateActiveAudio()
-            DispatchQueue.main.async { self.onProgramSceneChanged?(done) }
+            if commit {
+                updateActiveAudio()
+                DispatchQueue.main.async { self.onProgramSceneChanged?(done) }
+            }
         }
     }
 }

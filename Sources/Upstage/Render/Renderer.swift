@@ -153,6 +153,13 @@ final class Renderer {
 
     static func size(of t: MTLTexture) -> Size2D { Size2D(t.width, t.height) }
 
+    /// Releases the scratch textures and scalers that belonged to a removed source.
+    func forget(sourceID: UUID) {
+        let id = sourceID.uuidString
+        for k in scratch.keys where k.contains(id) { scratch.removeValue(forKey: k) }
+        upscalers.remove(prefix: "item.\(id)")
+    }
+
     // MARK: matrices
 
     static func ortho(canvas: Size2D) -> simd_float4x4 {
@@ -358,11 +365,20 @@ final class Renderer {
             // Crop/pad filter adds to the crop in texture (pre-rotation) space; approximate by
             // applying it in displayed space when there is no rotation, which is the common case.
             for f in item.filters {
-                if case .cropPad(let cp) = f, item.quarterTurns == 0, ds.width > 0, ds.height > 0 {
-                    uv.x += Float(cp.crop.left) / Float(ds.width)
-                    uv.y += Float(cp.crop.top) / Float(ds.height)
-                    uv.z -= Float(cp.crop.right) / Float(ds.width)
-                    uv.w -= Float(cp.crop.bottom) / Float(ds.height)
+                if case .cropPad(let cp) = f, ds.width > 0, ds.height > 0 {
+                    // The filter's crop is in raw (pre-rotation) pixels; map it onto the displayed edges.
+                    let c = cp.crop
+                    let (dl, dt, dr, db): (Int, Int, Int, Int)
+                    switch ((item.quarterTurns % 4) + 4) % 4 {
+                    case 1: (dl, dt, dr, db) = (c.bottom, c.left, c.top, c.right)
+                    case 2: (dl, dt, dr, db) = (c.right, c.bottom, c.left, c.top)
+                    case 3: (dl, dt, dr, db) = (c.top, c.right, c.bottom, c.left)
+                    default: (dl, dt, dr, db) = (c.left, c.top, c.right, c.bottom)
+                    }
+                    uv.x += Float(dl) / Float(ds.width)
+                    uv.y += Float(dt) / Float(ds.height)
+                    uv.z -= Float(dr) / Float(ds.width)
+                    uv.w -= Float(db) / Float(ds.height)
                 }
             }
             var u = QuadUniforms(mvp: proj * model, uvRect: uv, opacity: Float(t.opacity),
@@ -444,7 +460,7 @@ final class Renderer {
         case .metalFX: return upscale(cb, input: input, to: size, mode: .auto, key: key)
         case .lanczos: return lanczos(cb, input: input, to: size, key: key)
         case .bilinear:
-            guard let out = scratchTexture(key + ".bilinear", size: size) else { return nil }
+            guard let out = scratchTexture(key + ".bilinear.\(size)", size: size) else { return nil }
             let rp = MTLRenderPassDescriptor()
             rp.colorAttachments[0].texture = out
             rp.colorAttachments[0].loadAction = .dontCare
@@ -458,7 +474,7 @@ final class Renderer {
     }
 
     func lanczos(_ cb: MTLCommandBuffer, input: MTLTexture, to size: Size2D, key: String) -> MTLTexture? {
-        guard let out = scratchTexture(key + ".lanczos", size: size) else { return nil }
+        guard let out = scratchTexture(key + ".lanczos.\(size)", size: size) else { return nil }
         var u = FilterUniforms()
         u.texelSize = SIMD2<Float>(1 / Float(input.width), 1 / Float(input.height))
         fullscreenPass(cb, pipeline: lanczosPipeline, input: input, output: out, uniforms: u)

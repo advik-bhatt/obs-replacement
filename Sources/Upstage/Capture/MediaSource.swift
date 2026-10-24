@@ -22,6 +22,7 @@ final class MediaSource: VideoSourceInstance, AudioSourceInstance {
     private var startHostTime: Double = 0
     private var assetDuration: Double = 0
     private var naturalSize: Size2D?
+    private var rotationTurns = 0
     private(set) var isActive = false
     @Synchronized private(set) var status = "Not started"
     private var playbackOffset: Double = 0
@@ -35,7 +36,11 @@ final class MediaSource: VideoSourceInstance, AudioSourceInstance {
         audioOutput.syncOffsetMs = descriptor.audio.syncOffsetMs
     }
 
-    var displayedSize: Size2D? { naturalSize }
+    var displayedSize: Size2D? {
+        guard let n = naturalSize else { return nil }
+        return rotationTurns % 2 == 1 ? n.transposed : n
+    }
+    var quarterTurns: Int { rotationTurns }
     func latestFrame() -> VideoFrame? { slot.get() }
 
     func start() {
@@ -100,8 +105,11 @@ final class MediaSource: VideoSourceInstance, AudioSourceInstance {
                     r.add(out)
                     videoTrackOutput = out
                 }
-                let size = v.naturalSize.applying(v.preferredTransform)
-                naturalSize = Size2D(Int(abs(size.width)), Int(abs(size.height)))
+                // Frames arrive in stored orientation; the transform says how to show them.
+                let t = v.preferredTransform
+                let degrees = atan2(Double(t.b), Double(t.a)) * 180 / .pi
+                rotationTurns = ((Int((degrees / 90).rounded()) % 4) + 4) % 4
+                naturalSize = Size2D(Int(abs(v.naturalSize.width)), Int(abs(v.naturalSize.height)))
             } else {
                 videoTrackOutput = nil
                 naturalSize = nil
@@ -176,9 +184,9 @@ final class MediaSource: VideoSourceInstance, AudioSourceInstance {
                 slot.set(VideoFrame(texture: pair.0, holder: pair.1, size: sz, timestamp: hostTimeSeconds()))
             }
         }
-        // Audio: keep roughly 200 ms queued ahead of the mixer.
+        // Audio: keep roughly 100 ms queued ahead of the mixer (well under its 0.5 s trim line).
         if let ao = audioTrackOutput {
-            while audioOutput.ring.availableFrames < 48_000 / 5, let sb = ao.copyNextSampleBuffer() {
+            while audioOutput.ring.availableFrames < 4800, let sb = ao.copyNextSampleBuffer() {
                 pushAudio(sb)
             }
         }

@@ -100,21 +100,39 @@ final class ScreenCaptureSource: NSObject, VideoSourceInstance, SCStreamOutput, 
 
     func update(descriptor: SourceDescriptor) {
         self.descriptor = descriptor
+        let newMode: Mode
         switch descriptor.settings {
-        case .display(let d): mode = .display(d)
-        case .window(let w): mode = .window(w)
+        case .display(let d): newMode = .display(d)
+        case .window(let w): newMode = .window(w)
         default: return
         }
-        if isActive {
-            let s = stream
-            stream = nil
-            s?.stopCapture { [weak self] _ in
-                guard let self, self.isActive else { return }
-                SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, _ in
-                    guard let content else { return }
-                    self.configure(content)
-                }
+        let changed: Bool
+        switch (mode, newMode) {
+        case (.display(let a), .display(let b)): changed = a != b
+        case (.window(let a), .window(let b)): changed = a != b
+        default: changed = true
+        }
+        mode = newMode
+        // Filters, name, audio settings etc. change the descriptor too; only capture settings restart the stream.
+        guard changed, isActive else { return }
+        restart()
+    }
+
+    /// Stops the current stream (if any) and configures again from fresh shareable content.
+    private func restart() {
+        let s = stream
+        stream = nil
+        let reconfigure: () -> Void = { [weak self] in
+            guard let self, self.isActive else { return }
+            SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, _ in
+                guard let content else { return }
+                self.configure(content)
             }
+        }
+        if let s {
+            s.stopCapture { _ in reconfigure() }
+        } else {
+            reconfigure()
         }
     }
 
@@ -189,10 +207,7 @@ final class ScreenCaptureSource: NSObject, VideoSourceInstance, SCStreamOutput, 
             queue.asyncAfter(deadline: .now() + 2) { [weak self] in
                 guard let self, self.isActive else { return }
                 self.stream = nil
-                SCShareableContent.getExcludingDesktopWindows(false, onScreenWindowsOnly: false) { content, _ in
-                    guard let content else { return }
-                    self.configure(content)
-                }
+                self.restart()
             }
         }
     }
@@ -259,8 +274,15 @@ final class SystemAudioSource: NSObject, AudioSourceInstance, SCStreamOutput, SC
 
     func update(descriptor: SourceDescriptor) {
         self.descriptor = descriptor
-        if case .systemAudio(let s) = descriptor.settings { settings = s }
         audioOutput.syncOffsetMs = descriptor.audio.syncOffsetMs
+        guard case .systemAudio(let s) = descriptor.settings else { return }
+        let old = settings
+        settings = s
+        // excludesCurrentProcessAudio is baked into the stream configuration.
+        if old != s, isActive {
+            stop()
+            start()
+        }
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {

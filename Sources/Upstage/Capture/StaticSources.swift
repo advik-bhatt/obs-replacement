@@ -85,7 +85,9 @@ final class ImageSource: VideoSourceInstance {
             slot.clear()
             return
         }
-        let sz = Size2D(img.width, img.height)
+        // Metal textures cap at 8192 px a side; scale big images down proportionally.
+        let scale = min(1.0, 8192.0 / Double(max(img.width, img.height, 1)))
+        let sz = Size2D(max(1, Int(Double(img.width) * scale)), max(1, Int(Double(img.height) * scale)))
         guard let tex = Rasterizer.texture(device: device, size: sz, label: "image.\(id)", draw: { ctx in
             // CG draws with y up; we flipped the context, so flip the image back.
             ctx.saveGState()

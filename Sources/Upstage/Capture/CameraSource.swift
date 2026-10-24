@@ -73,6 +73,13 @@ final class CameraSource: NSObject, VideoSourceInstance, AudioSourceInstance,
             guard let self, let d = note.object as? AVCaptureDevice, d.uniqueID == self.device?.uniqueID else { return }
             self.status = "Disconnected: \(d.localizedName)"
             self.slot.clear()
+            // Forget the dead device so the reconnect path restarts the session.
+            self.sessionQueue.async { [weak self] in
+                guard let self else { return }
+                if self.session.isRunning { self.session.stopRunning() }
+                self.tearDown()
+            }
+            self.scheduleRestart()
         })
     }
 
@@ -220,10 +227,21 @@ final class CameraSource: NSObject, VideoSourceInstance, AudioSourceInstance,
         guard let format = best else { return }
         d.activeFormat = format
         let ranges = format.videoSupportedFrameRateRanges
-        let maxSupported = ranges.map(\.maxFrameRate).max() ?? wantFPS
-        let minSupported = ranges.map(\.minFrameRate).min() ?? 1
-        let fps = min(max(wantFPS, minSupported), maxSupported)
-        let duration = CMTime(value: 1000, timescale: CMTimeScale(fps * 1000))
+        guard !ranges.isEmpty else { return }
+        // Many UVC cameras report discrete ranges (30, 24, 15...). A duration that
+        // falls in no range raises an uncatchable ObjC exception, so clamp inside
+        // the single nearest range and use its exact end values at the edges.
+        func clamped(_ r: AVFrameRateRange) -> Double { min(max(wantFPS, r.minFrameRate), r.maxFrameRate) }
+        guard let range = ranges.min(by: { abs(clamped($0) - wantFPS) < abs(clamped($1) - wantFPS) }) else { return }
+        let fps = clamped(range)
+        let duration: CMTime
+        if fps <= range.minFrameRate + 1e-6 {
+            duration = range.maxFrameDuration
+        } else if fps >= range.maxFrameRate - 1e-6 {
+            duration = range.minFrameDuration
+        } else {
+            duration = CMTime(value: 1000, timescale: CMTimeScale(fps * 1000))
+        }
         d.activeVideoMinFrameDuration = duration
         d.activeVideoMaxFrameDuration = duration
     }
