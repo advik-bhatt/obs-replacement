@@ -19,9 +19,11 @@ Sonoma or newer.
 
 ## Download
 
-1. Open the latest run of the **build** workflow under *Actions* and download
-   the `Upstage-macOS` artifact (a `.dmg` and a `.zip`), or grab the DMG from
-   the *Releases* page once a `v*` tag exists.
+1. Grab `Upstage-<version>.dmg` from the
+   [Releases page](https://github.com/advik-bhatt/obs-replacement/releases)
+   (pre-releases are the alpha builds), or open the latest run of the
+   **build** workflow under *Actions* and download the `Upstage-macOS`
+   artifact (same `.dmg` plus a `.zip`; needs a GitHub login).
 2. Drag `Upstage.app` to *Applications*.
 3. The app is ad-hoc signed (no Apple Developer ID yet), so the first launch
    is blocked by Gatekeeper. Open *System Settings > Privacy & Security*,

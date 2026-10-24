@@ -25,6 +25,11 @@ Native macOS recording/streaming app (OBS replacement) in Swift. Read
 - There is no Mac in remote sessions: the macOS job IS the compiler. Push,
   read the job log (GitHub Actions), fix, push again. Keep Swift 5 language
   mode, macOS 14 deployment target, no third-party packages.
+- Releases: remote sessions cannot push tags (the git proxy refuses them).
+  Bump `UpstageVersion.string` and `Resources/Info.plist`, push to main, then
+  dispatch `build.yml` (GitHub MCP `actions_run_trigger`, ref `main`) with
+  input `release_tag=vX.Y.Z[-alpha.N]`; the workflow creates the tag and the
+  GitHub Release with the DMG. A `-` in the tag marks it a pre-release.
 
 ## Architecture in one paragraph
 `UpstageCore` is platform-independent and unit-tested: the scene/source/profile
