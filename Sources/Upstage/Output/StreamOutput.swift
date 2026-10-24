@@ -49,6 +49,11 @@ final class StreamOutput: AudioSink {
     private var lastVideoTS: UInt32 = 0
     private var lastAudioTS: UInt32 = 0
     private let maxOutstandingBytes: Int
+    /// Bumped on every connect/teardown so callbacks from a dead connection are ignored.
+    private var generation = 0
+    /// After dropping a P-frame we must drop until the next keyframe or the decoder sees broken references.
+    private var droppingUntilKeyframe = false
+    private let connectTimeoutSeconds: Double = 20
 
     init(settings: StreamSettings, video: VideoSettings) {
         self.settings = settings
@@ -98,7 +103,7 @@ final class StreamOutput: AudioSink {
     }
 
     private func connect() {
-        guard !stopping else { return }
+        guard !stopping, connection == nil else { return }
         guard let url = RTMPURL(string: settings.serverURL) else {
             setState(.failed("Invalid server URL"))
             return
@@ -111,9 +116,12 @@ final class StreamOutput: AudioSink {
         }
         let conn = NWConnection(host: NWEndpoint.Host(url.host), port: NWEndpoint.Port(rawValue: url.port) ?? 1935, using: params)
         let sess = RTMPPublisherSession(url: url, streamKey: settings.streamKey)
+        generation += 1
+        let gen = generation
+        droppingUntilKeyframe = false
         sess.onServerMessage = { [weak self] msg in self?.stats.serverMessage = msg }
         sess.onStateChange = { [weak self] st in
-            guard let self else { return }
+            guard let self, gen == self.generation else { return }
             switch st {
             case .publishing:
                 self.onPublishing()
@@ -127,15 +135,18 @@ final class StreamOutput: AudioSink {
         conn.stateUpdateHandler = { [weak self] st in
             guard let self else { return }
             self.queue.async {
+                guard gen == self.generation else { return }
                 switch st {
                 case .ready:
-                    self.send(sess.start())
-                    self.receiveLoop()
+                    self.send(sess.start(), gen: gen)
+                    self.receiveLoop(gen: gen)
                 case .failed(let err):
                     self.handleFailure("Connection failed: \(err.localizedDescription)")
                 case .cancelled:
                     break
                 case .waiting(let err):
+                    // DNS failures, refused connections and SYN timeouts park here forever; the
+                    // connect timeout below turns them into a failure.
                     self.stats.serverMessage = "Waiting: \(err.localizedDescription)"
                 default:
                     break
@@ -143,16 +154,20 @@ final class StreamOutput: AudioSink {
             }
         }
         conn.start(queue: queue)
+        queue.asyncAfter(deadline: .now() + connectTimeoutSeconds) { [weak self] in
+            guard let self, gen == self.generation, self.state != .live else { return }
+            self.handleFailure("Could not reach \(url.host):\(url.port) within \(Int(self.connectTimeoutSeconds)) s (\(self.stats.serverMessage))")
+        }
     }
 
-    private func receiveLoop() {
-        guard let conn = connection, let sess = session else { return }
+    private func receiveLoop(gen: Int) {
+        guard gen == generation, let conn = connection, let sess = session else { return }
         conn.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
-            guard let self else { return }
+            guard let self, gen == self.generation else { return }
             if let data, !data.isEmpty {
                 do {
                     let reply = try sess.receive(Array(data))
-                    if !reply.isEmpty { self.send(reply) }
+                    if !reply.isEmpty { self.send(reply, gen: gen) }
                 } catch {
                     self.handleFailure("\(error)")
                     return
@@ -166,20 +181,16 @@ final class StreamOutput: AudioSink {
                 self.handleFailure("Server closed the connection")
                 return
             }
-            self.receiveLoop()
+            self.receiveLoop(gen: gen)
         }
     }
 
-    private func send(_ bytes: [UInt8], droppable: Bool = false) {
-        guard let conn = connection, !bytes.isEmpty else { return }
-        if droppable, outstandingBytes > maxOutstandingBytes {
-            stats.framesDropped += 1
-            return
-        }
+    private func send(_ bytes: [UInt8], gen: Int) {
+        guard gen == generation, let conn = connection, !bytes.isEmpty else { return }
         outstandingBytes += bytes.count
         let count = bytes.count
         conn.send(content: Data(bytes), completion: .contentProcessed { [weak self] error in
-            guard let self else { return }
+            guard let self, gen == self.generation else { return }
             self.outstandingBytes -= count
             if error == nil {
                 self.stats.bytesSent &+= UInt64(count)
@@ -199,7 +210,7 @@ final class StreamOutput: AudioSink {
             let meta = RTMPStreamMetadata(width: encodedSize.width, height: encodedSize.height, frameRate: video.frameRate,
                                           videoBitrateKbps: settings.videoBitrateKbps, audioBitrateKbps: settings.audioBitrateKbps,
                                           encoder: "Upstage \(UpstageVersion.string)")
-            send(try sess.metadata(meta))
+            send(try sess.metadata(meta), gen: generation)
         } catch {
             handleFailure("\(error)")
             return
@@ -209,7 +220,11 @@ final class StreamOutput: AudioSink {
 
     private func handleFailure(_ why: String) {
         guard !stopping else { return }
+        // Idempotent: the session reports a failure and then throws, so this runs
+        // twice per failure; the second call finds nothing to tear down.
+        guard connection != nil || session != nil else { return }
         stats.serverMessage = why
+        generation += 1
         teardown()
         if settings.autoReconnect, attempt < settings.maxReconnectAttempts {
             attempt += 1
@@ -242,8 +257,8 @@ final class StreamOutput: AudioSink {
                 return
             }
             do {
-                send(try sess.videoSequenceHeader(avcC: avcC))
-                send(try sess.audioSequenceHeader(audioSpecificConfig: asc))
+                send(try sess.videoSequenceHeader(avcC: avcC), gen: generation)
+                send(try sess.audioSequenceHeader(audioSpecificConfig: asc), gen: generation)
             } catch {
                 handleFailure("\(error)")
                 return
@@ -254,8 +269,27 @@ final class StreamOutput: AudioSink {
         let ts = UInt32(max(0, (frame.dts - epoch) * 1000))
         let cts = Int32(max(0, (frame.pts - frame.dts) * 1000))
         lastVideoTS = max(lastVideoTS, ts)
+        // Congestion control that keeps the GOP intact: once a frame is dropped,
+        // keep dropping until a keyframe can go out, and ask the encoder for one.
+        let congested = outstandingBytes > maxOutstandingBytes
+        if frame.isKeyframe {
+            if congested {
+                stats.framesDropped += 1
+                droppingUntilKeyframe = true
+                encoder?.forceKeyframe()
+                return
+            }
+            droppingUntilKeyframe = false
+        } else if droppingUntilKeyframe || congested {
+            if !droppingUntilKeyframe {
+                droppingUntilKeyframe = true
+                encoder?.forceKeyframe()
+            }
+            stats.framesDropped += 1
+            return
+        }
         do {
-            send(try sess.videoFrame(avcc: frame.data, keyframe: frame.isKeyframe, timestampMs: ts, compositionTimeMs: cts), droppable: !frame.isKeyframe)
+            send(try sess.videoFrame(avcc: frame.data, keyframe: frame.isKeyframe, timestampMs: ts, compositionTimeMs: cts), gen: generation)
             stats.framesSent += 1
         } catch {
             handleFailure("\(error)")
@@ -289,7 +323,7 @@ final class StreamOutput: AudioSink {
         let ts = UInt32(max(0, (p.timestamp - epoch) * 1000))
         lastAudioTS = max(lastAudioTS, ts)
         do {
-            send(try sess.audioFrame(aac: p.data, timestampMs: ts))
+            send(try sess.audioFrame(aac: p.data, timestampMs: ts), gen: generation)
         } catch {
             handleFailure("\(error)")
         }

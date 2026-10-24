@@ -30,6 +30,7 @@ final class Recorder: AudioSink {
     private let audioTrackMask: UInt8
     var onStateChange: ((State) -> Void)?
     private var lastAudioPTS: Double = -1
+    private var lastVideoPTS: Double = -1
 
     init(settings: RecordingSettings, video: VideoSettings, sceneName: String) throws {
         self.settings = settings
@@ -163,7 +164,10 @@ final class Recorder: AudioSink {
                 sessionStarted = true
             }
             guard vi.isReadyForMoreMediaData else { return }
-            if ad.append(pixelBuffer, withPresentationTime: fileTime(pts)) {
+            let t = fileTime(pts)
+            if CMTimeGetSeconds(t) <= lastVideoPTS { return }
+            lastVideoPTS = CMTimeGetSeconds(t)
+            if ad.append(pixelBuffer, withPresentationTime: t) {
                 videoFramesWritten += 1
             } else if w.status == .failed {
                 setState(.failed(w.error?.localizedDescription ?? "writer failed"))

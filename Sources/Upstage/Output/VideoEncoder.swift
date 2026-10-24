@@ -122,13 +122,14 @@ final class VideoEncoder {
         if isKey, avcC == nil, codec == .h264 {
             avcC = VideoEncoder.extractAvcC(from: fd)
         }
-        var length = 0
-        var dataPointer: UnsafeMutablePointer<CChar>?
-        guard CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer) == noErr, let dp = dataPointer, length > 0 else { return }
+        let length = CMBlockBufferGetDataLength(block)
+        guard length > 0 else { return }
         var bytes = [UInt8](repeating: 0, count: length)
-        bytes.withUnsafeMutableBytes { dst in
-            _ = memcpy(dst.baseAddress, dp, length)
+        // A VideoToolbox block buffer may be non-contiguous; copy instead of taking a pointer.
+        let copyStatus = bytes.withUnsafeMutableBytes { dst in
+            CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: dst.baseAddress!)
         }
+        guard copyStatus == noErr else { return }
         let pts = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sb))
         let dtsTime = CMSampleBufferGetDecodeTimeStamp(sb)
         let dts = dtsTime.isValid ? CMTimeGetSeconds(dtsTime) : pts

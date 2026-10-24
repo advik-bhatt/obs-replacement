@@ -178,7 +178,11 @@ struct StreamSettingsTab: View {
                 ForEach(StreamService.allCases, id: \.self) { Text($0.label).tag($0) }
             }
             .onChange(of: state.profile.stream.service) { _, s in
-                if let first = s.servers.first, !first.url.isEmpty { state.profile.stream.serverURL = first.url }
+                // Only replace the URL when it does not already belong to the new service
+                // (a profile switch changes service and URL together).
+                let current = state.profile.stream.serverURL
+                let belongs = s.servers.contains { $0.url == current }
+                if let first = s.servers.first, !first.url.isEmpty, !belongs { state.profile.stream.serverURL = first.url }
             }
             if !state.profile.stream.service.servers.isEmpty, state.profile.stream.service != .kick {
                 Picker("Server", selection: $state.profile.stream.serverURL) {
@@ -308,7 +312,8 @@ struct HotkeysTab: View {
                 stopRecording()
                 return nil
             }
-            let isFunctionKey = (0x60...0x7A).contains(Int(event.keyCode))
+            let functionKeys: Set<UInt16> = [0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, 0x67, 0x6F, 0x69, 0x6B, 0x71, 0x6A, 0x40, 0x4F, 0x50, 0x5A]
+            let isFunctionKey = functionKeys.contains(event.keyCode)
             guard !mods.isEmpty || isFunctionKey else { return nil }
             let combo = KeyCombo(keyCode: UInt32(event.keyCode), modifiers: mods)
             state.profile.hotkeys.set(combo, for: action)

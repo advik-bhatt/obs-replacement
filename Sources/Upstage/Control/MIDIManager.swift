@@ -35,7 +35,9 @@ final class MIDIManager {
     }
 
     func apply(_ bindings: [MIDIBinding]) {
+        lock.lock()
         self.bindings = bindings
+        lock.unlock()
     }
 
     private func connectAllSources() {
@@ -93,7 +95,9 @@ final class MIDIManager {
         }
         let events = MIDIParser.parse(bytes)
         guard !events.isEmpty else { return }
+        lock.lock()
         let bindings = self.bindings
+        lock.unlock()
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             for e in events {

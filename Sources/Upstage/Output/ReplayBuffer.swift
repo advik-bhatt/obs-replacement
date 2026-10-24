@@ -89,7 +89,7 @@ final class ReplayBuffer: AudioSink {
                 return
             }
             let snapshotVideo = Array(frames[startIdx...])
-            let snapshotAudio = audio.filter { $0.timestamp >= snapshotVideo[0].pts - 0.05 }
+            let snapshotAudio = audio.filter { $0.timestamp >= snapshotVideo[0].pts }
             do {
                 let dir = URL(fileURLWithPath: (recording.directory as NSString).expandingTildeInPath, isDirectory: true)
                 try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

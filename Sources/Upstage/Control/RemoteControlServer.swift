@@ -55,6 +55,8 @@ final class RemoteControlServer: OBSWebSocketRequestHandler {
         let ws = NWProtocolWebSocket.Options()
         ws.autoReplyPing = true
         ws.maximumMessageSize = 4 * 1024 * 1024
+        // obs-websocket-js (Companion, Touch Portal, browsers) requires this subprotocol.
+        ws.setSubprotocols(["obswebsocket.json"])
         params.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
         do {
             let l = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port) ?? 4455)
@@ -115,16 +117,28 @@ final class RemoteControlServer: OBSWebSocketRequestHandler {
     }
 
     private func receive(_ conn: NWConnection, _ proto: OBSWebSocketConnection) {
-        conn.receiveMessage { [weak self, weak conn] data, context, _, error in
+        conn.receiveMessage { [weak self, weak conn] data, context, isComplete, error in
             guard let self, let conn else { return }
             if let error {
                 _ = error
                 conn.cancel()
                 return
             }
-            if let meta = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata, meta.opcode == .close {
+            // EOF without a close frame (client vanished): stop re-arming.
+            if data == nil && isComplete {
                 conn.cancel()
                 return
+            }
+            if let meta = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata {
+                if meta.opcode == .close {
+                    conn.cancel()
+                    return
+                }
+                if meta.opcode != .text {
+                    // ping/pong/binary: nothing for the protocol layer
+                    self.receive(conn, proto)
+                    return
+                }
             }
             if let data, let text = String(data: data, encoding: .utf8) {
                 let replies = proto.receive(text)
@@ -258,27 +272,29 @@ final class RemoteControlServer: OBSWebSocketRequestHandler {
                         "outputDuration": .number(s.seconds * 1000), "outputCongestion": .number(s.congestion), "outputBytes": .number(Double(s.bytes)),
                         "outputSkippedFrames": .number(Double(s.skipped)), "outputTotalFrames": .number(Double(s.total))])
         case "StartStream":
-            return host.rcStartStream() ? .ok() : .error(.outputRunning)
+            if host.rcStreamStatus().active { return .error(.outputRunning) }
+            return host.rcStartStream() ? .ok() : .error(.invalidResourceState, "The stream could not start; check Settings > Stream")
         case "StopStream":
             return host.rcStopStream() ? .ok() : .error(.outputNotRunning)
         case "ToggleStream":
             let active = host.rcStreamStatus().active
             if active { _ = host.rcStopStream() } else { _ = host.rcStartStream() }
-            return .ok(["outputActive": .bool(!active)])
+            return .ok(["outputActive": .bool(host.rcStreamStatus().active)])
 
         case "GetRecordStatus":
             let r = host.rcRecordStatus()
             return .ok(["outputActive": .bool(r.active), "outputPaused": .bool(r.paused), "outputTimecode": .string(RemoteControlServer.timecode(r.seconds)),
                         "outputDuration": .number(r.seconds * 1000), "outputBytes": .number(Double(r.bytes))])
         case "StartRecord":
-            return host.rcStartRecord() ? .ok() : .error(.outputRunning)
+            if host.rcRecordStatus().active { return .error(.outputRunning) }
+            return host.rcStartRecord() ? .ok() : .error(.invalidResourceState, "Recording could not start; check Settings > Output")
         case "StopRecord":
             guard let path = host.rcStopRecord() else { return .error(.outputNotRunning) }
             return .ok(["outputPath": .string(path)])
         case "ToggleRecord":
             let r = host.rcRecordStatus()
             if r.active { _ = host.rcStopRecord() } else { _ = host.rcStartRecord() }
-            return .ok(["outputActive": .bool(!r.active)])
+            return .ok(["outputActive": .bool(host.rcRecordStatus().active)])
         case "PauseRecord":
             return host.rcPauseRecord(true) ? .ok() : .error(.outputNotRunning)
         case "ResumeRecord":

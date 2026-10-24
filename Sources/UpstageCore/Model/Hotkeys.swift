@@ -138,9 +138,14 @@ public struct HotkeyBindings: Codable, Equatable, Hashable {
         bindings.filter { $0.combo == combo }.map { $0.action }
     }
 
+    /// Binds `combo` to `action`; a chord can drive only one action, so any other
+    /// action holding the same chord loses it (Carbon would otherwise register it twice).
     public mutating func set(_ combo: KeyCombo?, for action: ControlAction) {
         bindings.removeAll { $0.action == action }
-        if let combo { bindings.append(HotkeyBinding(action: action, combo: combo)) }
+        if let combo {
+            bindings.removeAll { $0.combo == combo }
+            bindings.append(HotkeyBinding(action: action, combo: combo))
+        }
     }
 
     /// Other actions already bound to this combo.

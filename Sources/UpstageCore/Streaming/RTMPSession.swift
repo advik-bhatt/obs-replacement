@@ -282,19 +282,21 @@ public final class RTMPPublisherSession {
             }
         case "_error":
             let desc = info["description"]?.stringValue ?? info["code"]?.stringValue ?? "unknown error"
-            if let pending = pendingTransactions.removeValue(forKey: txn), pending == "connect" {
+            if let pending = pendingTransactions.removeValue(forKey: txn) {
                 setState(.failed(desc))
-                throw RTMPSessionError.connectRejected(desc)
+                if pending == "connect" { throw RTMPSessionError.connectRejected(desc) }
+                throw RTMPSessionError.publishRejected("\(pending) failed: \(desc)")
             }
             onServerMessage?(desc)
             return []
         case "onStatus":
             let code = info["code"]?.stringValue ?? ""
             let desc = info["description"]?.stringValue ?? code
+            let level = info["level"]?.stringValue ?? "status"
             onServerMessage?(desc)
             if code == "NetStream.Publish.Start" {
                 setState(.publishing)
-            } else if code.hasPrefix("NetStream.Publish.BadName") || code.hasPrefix("NetStream.Failed") || code.hasPrefix("NetStream.Publish.Failed") || code.hasPrefix("NetConnection.Connect.Rejected") {
+            } else if level == "error" || code.hasPrefix("NetStream.Publish.BadName") || code.hasPrefix("NetStream.Failed") || code.hasPrefix("NetStream.Publish.Failed") || code.hasPrefix("NetConnection.Connect.Rejected") {
                 setState(.failed(desc))
                 throw RTMPSessionError.publishRejected(desc)
             }

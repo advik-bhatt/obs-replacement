@@ -176,7 +176,7 @@ public final class OBSWebSocketConnection {
             return []
         }
         guard let op = OBSWebSocket.OpCode(rawValue: opRaw) else {
-            phase = .closed(code: 4005, reason: "Unknown opcode")
+            phase = .closed(code: 4006, reason: "Unknown opcode")
             return []
         }
         let d = msg["d"] ?? .object([:])
@@ -184,7 +184,7 @@ public final class OBSWebSocketConnection {
         case (.awaitingIdentify, .identify):
             return identify(d)
         case (.awaitingIdentify, _):
-            phase = .closed(code: 4008, reason: "Not identified")
+            phase = .closed(code: 4007, reason: "Not identified")
             return []
         case (.identified, .reidentify):
             if let subs = d["eventSubscriptions"]?.intValue { eventSubscriptions = subs }
@@ -194,10 +194,10 @@ public final class OBSWebSocketConnection {
         case (.identified, .requestBatch):
             return [handleBatch(d)]
         case (.identified, .identify):
-            phase = .closed(code: 4009, reason: "Already identified")
+            phase = .closed(code: 4008, reason: "Already identified")
             return []
         case (.identified, _):
-            phase = .closed(code: 4005, reason: "Unsupported opcode for client")
+            phase = .closed(code: 4006, reason: "Unsupported opcode for client")
             return []
         case (.closed, _):
             return []
@@ -206,7 +206,7 @@ public final class OBSWebSocketConnection {
 
     private func identify(_ d: JSONValue) -> [JSONValue] {
         guard let rpc = d["rpcVersion"]?.intValue else {
-            phase = .closed(code: 4006, reason: "Missing rpcVersion")
+            phase = .closed(code: 4003, reason: "Missing rpcVersion")
             return []
         }
         guard rpc == rpcVersion else {
@@ -216,7 +216,7 @@ public final class OBSWebSocketConnection {
         if requiresAuthentication {
             let expected = OBSWebSocket.Auth.authentication(password: password, salt: salt, challenge: challenge)
             guard let auth = d["authentication"]?.stringValue else {
-                phase = .closed(code: 4007, reason: "Authentication required")
+                phase = .closed(code: 4003, reason: "Authentication required")
                 return []
             }
             guard auth == expected else {

@@ -68,7 +68,7 @@ final class RemoteTests: XCTestCase {
         XCTAssertFalse(salt.isEmpty)
         var r = c.receive(#"{"op":1,"d":{"rpcVersion":1}}"#)
         XCTAssertTrue(r.isEmpty)
-        XCTAssertEqual(c.phase, .closed(code: 4007, reason: "Authentication required"))
+        XCTAssertEqual(c.phase, .closed(code: 4003, reason: "Authentication required"))
 
         let c2 = OBSWebSocketConnection(password: "pw", handler: Handler())
         _ = c2.hello()
@@ -88,7 +88,7 @@ final class RemoteTests: XCTestCase {
     func testRequestBeforeIdentifyCloses() {
         let c = OBSWebSocketConnection(password: "", handler: Handler())
         _ = c.receive(#"{"op":6,"d":{"requestType":"GetVersion","requestId":"1"}}"#)
-        XCTAssertEqual(c.phase, .closed(code: 4008, reason: "Not identified"))
+        XCTAssertEqual(c.phase, .closed(code: 4007, reason: "Not identified"))
     }
 
     func testBatchHaltsOnFailure() {

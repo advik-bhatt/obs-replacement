@@ -157,14 +157,17 @@ final class AppState: ObservableObject {
                 alert = AppAlert(title: "Video settings locked", message: "Stop recording, streaming and the replay buffer before changing resolution or frame rate.")
             } else {
                 engine.apply(video: profile.video)
-                for scene in collection.scenes { for item in scene.items { pendingFit.insert(item.id) } }
-                refitAll()
+                // A real canvas change re-fits everything; launch keeps the saved layout.
+                if !force {
+                    for scene in collection.scenes { for item in scene.items { pendingFit.insert(item.id) } }
+                    refitAll()
+                }
             }
         }
         if force || old?.hotkeys != profile.hotkeys { hotkeys.apply(profile.hotkeys) }
         if force || old?.midi != profile.midi { midi.apply(profile.midi) }
         if force || old?.remote != profile.remote {
-            if profile.remote.enabled { remote.start(port: profile.remote.port, password: profile.remote.password) } else { remote.stop() }
+            scheduleRemoteApply(immediate: force)
         }
         if force || old?.audio.monitoringDeviceUID != profile.audio.monitoringDeviceUID {
             engine.mixer.setMonitoringDevice(uid: profile.audio.monitoringDeviceUID)
@@ -172,6 +175,27 @@ final class AppState: ObservableObject {
         if force || old?.replay != profile.replay {
             if profile.replay.enabled, !replayActive { startReplayBuffer() }
             if !profile.replay.enabled, replayActive { stopReplayBuffer() }
+        }
+    }
+
+    private var remoteApplyTimer: Timer?
+
+    /// The Remote settings fields write on every keystroke; restart the listener once they settle.
+    private func scheduleRemoteApply(immediate: Bool) {
+        remoteApplyTimer?.invalidate()
+        remoteApplyTimer = nil
+        let apply = { [weak self] in
+            guard let self else { return }
+            if self.profile.remote.enabled {
+                self.remote.start(port: self.profile.remote.port, password: self.profile.remote.password)
+            } else {
+                self.remote.stop()
+            }
+        }
+        if immediate {
+            apply()
+        } else {
+            remoteApplyTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { _ in apply() }
         }
     }
 
@@ -184,6 +208,8 @@ final class AppState: ObservableObject {
             recordingDuration = r.duration
             if case .failed(let why) = r.state, isRecording {
                 isRecording = false
+                recordingPaused = false
+                engine.stopRecording { _ in }
                 alert = AppAlert(title: "Recording failed", message: why)
             }
         }
@@ -231,9 +257,27 @@ final class AppState: ObservableObject {
 
     func removeScene(_ id: UUID) {
         guard collection.scenes.count > 1 else { return }
-        collection.removeScene(id)
-        if programSceneID == id { selectScene(collection.currentSceneID) }
-        if previewSceneID == id { previewSceneID = collection.scenes.first?.id }
+        let wasProgram = programSceneID == id
+        collection.removeScene(id)   // Engine.apply already moved its own program scene
+        if wasProgram {
+            programSceneID = collection.currentSceneID
+            engine?.switchProgramScene(to: programSceneID, transition: TransitionSettings(kind: .cut), animated: false)
+            transitionInProgress = false
+        }
+        if previewSceneID == id {
+            previewSceneID = collection.scenes.first?.id
+            if let p = previewSceneID { engine?.setPreviewScene(p) }
+        }
+        if selectedItemID != nil, item(selectedItemID!) == nil { selectedItemID = nil }
+    }
+
+    /// Modal yes/no used by the stop confirmations.
+    private func confirmStop(_ question: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = question
+        alert.addButton(withTitle: "Stop")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     func renameScene(_ id: UUID, to name: String) {
@@ -444,8 +488,14 @@ final class AppState: ObservableObject {
 
     // MARK: outputs
 
-    func toggleRecording() {
-        if isRecording { stopRecording() } else { startRecording() }
+    /// `confirm` honours Settings > General; hotkeys and remote control pass false.
+    func toggleRecording(confirm: Bool = true) {
+        if isRecording {
+            if confirm, profile.general.confirmBeforeStoppingRecording, !confirmStop("Stop recording?") { return }
+            stopRecording()
+        } else {
+            startRecording()
+        }
     }
 
     func startRecording() {
@@ -487,8 +537,13 @@ final class AppState: ObservableObject {
         recordingPaused.toggle()
     }
 
-    func toggleStreaming() {
-        if isStreaming { stopStreaming() } else { startStreaming() }
+    func toggleStreaming(confirm: Bool = true) {
+        if isStreaming {
+            if confirm, profile.general.confirmBeforeStoppingStream, !confirmStop("Stop streaming? You are live.") { return }
+            stopStreaming()
+        } else {
+            startStreaming()
+        }
     }
 
     func startStreaming() {
@@ -561,8 +616,8 @@ final class AppState: ObservableObject {
 
     func perform(_ action: ControlAction, pressed: Bool, value: Double?) {
         switch action {
-        case .startStopStreaming: if pressed { toggleStreaming() }
-        case .startStopRecording: if pressed { toggleRecording() }
+        case .startStopStreaming: if pressed { toggleStreaming(confirm: false) }
+        case .startStopRecording: if pressed { toggleRecording(confirm: false) }
         case .pauseResumeRecording: if pressed { pauseResumeRecording() }
         case .saveReplay: if pressed { saveReplay() }
         case .toggleStudioMode: if pressed { toggleStudioMode() }
@@ -597,6 +652,7 @@ final class AppState: ObservableObject {
         previewSceneID = c.previewSceneID
         engine?.apply(collection: c)
         engine?.switchProgramScene(to: c.currentSceneID, transition: TransitionSettings(kind: .cut), animated: false)
+        if let p = previewSceneID { engine?.setPreviewScene(p) }
         selectedItemID = nil
     }
 
@@ -618,6 +674,10 @@ final class AppState: ObservableObject {
 
     func renameCollection(to name: String) {
         guard !name.isEmpty, name != collection.name else { return }
+        guard !store.listCollections().contains(name) else {
+            alert = AppAlert(title: "Name in use", message: "A scene collection called \"\(name)\" already exists.")
+            return
+        }
         let old = collection.name
         store.rename(collection: old, to: name)
         collection.name = name
@@ -626,7 +686,12 @@ final class AppState: ObservableObject {
     }
 
     func switchProfile(named name: String) {
-        guard name != profile.name, !(engine?.anyOutputActive ?? false) else { return }
+        guard name != profile.name else { return }
+        if isRecording || isStreaming {
+            alert = AppAlert(title: "Profile locked", message: "Stop recording and streaming before switching profiles.")
+            return
+        }
+        if replayActive { stopReplayBuffer() }   // applyProfile restarts it if the new profile wants it
         store.flush()
         guard let p = store.loadProfile(named: name) else { return }
         store.setActive(profile: name)
@@ -652,6 +717,10 @@ final class AppState: ObservableObject {
 
     func renameProfile(to name: String) {
         guard !name.isEmpty, name != profile.name else { return }
+        guard !store.listProfiles().contains(name) else {
+            alert = AppAlert(title: "Name in use", message: "A profile called \"\(name)\" already exists.")
+            return
+        }
         store.rename(profile: profile.name, to: name)
         profile.name = name
         store.setActive(profile: name)
