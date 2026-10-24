@@ -17,7 +17,7 @@ public struct SceneItem: Codable, Equatable, Hashable, Identifiable {
     }
 }
 
-public struct Scene: Codable, Equatable, Hashable, Identifiable {
+public struct StudioScene: Codable, Equatable, Hashable, Identifiable {
     public var id: UUID
     public var name: String
     /// Draw order: index 0 is the bottom.
@@ -69,13 +69,13 @@ public struct SceneCollection: Codable, Equatable {
 
     public var version: Int
     public var name: String
-    public var scenes: [Scene]
+    public var scenes: [StudioScene]
     public var sources: [SourceDescriptor]
     public var currentSceneID: UUID
     public var previewSceneID: UUID?
     public var transition: TransitionSettings
 
-    public init(name: String, scenes: [Scene], sources: [SourceDescriptor],
+    public init(name: String, scenes: [StudioScene], sources: [SourceDescriptor],
                 currentSceneID: UUID, previewSceneID: UUID? = nil,
                 transition: TransitionSettings = TransitionSettings()) {
         self.version = SceneCollection.formatVersion
@@ -89,19 +89,19 @@ public struct SceneCollection: Codable, Equatable {
 
     /// One empty scene, nothing else. What a fresh install shows.
     public static func empty(name: String = "Untitled") -> SceneCollection {
-        let scene = Scene(name: "Scene")
+        let scene = StudioScene(name: "Scene")
         return SceneCollection(name: name, scenes: [scene], sources: [], currentSceneID: scene.id)
     }
 
     // MARK: lookups
 
-    public func scene(_ id: UUID) -> Scene? { scenes.first { $0.id == id } }
+    public func scene(_ id: UUID) -> StudioScene? { scenes.first { $0.id == id } }
     public func sceneIndex(_ id: UUID) -> Int? { scenes.firstIndex { $0.id == id } }
     public func source(_ id: UUID) -> SourceDescriptor? { sources.first { $0.id == id } }
     public func sourceIndex(_ id: UUID) -> Int? { sources.firstIndex { $0.id == id } }
-    public var currentScene: Scene? { scene(currentSceneID) }
+    public var currentScene: StudioScene? { scene(currentSceneID) }
 
-    public func scenes(containing sourceID: UUID) -> [Scene] {
+    public func scenes(containing sourceID: UUID) -> [StudioScene] {
         scenes.filter { $0.items.contains { $0.sourceID == sourceID } }
     }
 
@@ -113,9 +113,9 @@ public struct SceneCollection: Codable, Equatable {
     // MARK: mutation helpers (pure, so the UI layer can stay thin)
 
     @discardableResult
-    public mutating func addScene(named name: String) -> Scene {
+    public mutating func addScene(named name: String) -> StudioScene {
         let unique = uniqueName(name, existing: scenes.map { $0.name })
-        let scene = Scene(name: unique)
+        let scene = StudioScene(name: unique)
         scenes.append(scene)
         return scene
     }
