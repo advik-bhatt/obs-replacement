@@ -1,0 +1,30 @@
+name: maintenance
+
+# Manual housekeeping that remote sessions cannot do over git (tag refs are
+# refused by their proxy): delete releases and their tags.
+on:
+  workflow_dispatch:
+    inputs:
+      delete_release_tags:
+        description: "Space-separated release tags to delete together with their git tags (e.g. v0.1.0-alpha.1 v0.1.0-alpha.2)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  delete-releases:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete releases and tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for tag in ${{ inputs.delete_release_tags }}; do
+            echo "== $tag"
+            gh release delete "$tag" --cleanup-tag --yes || echo "no release for $tag"
+            gh api -X DELETE "repos/$GH_REPO/git/refs/tags/$tag" 2>/dev/null || echo "tag $tag already gone"
+          done
+          echo "remaining tags:"
+          gh api "repos/$GH_REPO/git/refs/tags" --jq '.[].ref' 2>/dev/null || echo "(none)"
